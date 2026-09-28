@@ -326,29 +326,22 @@ public const string Version = "0.9.6";
     }
 
     /// <summary>
-    /// 专注中的定时闲聊 / 休息中的闲聊。间隔刻意拉得很开，避免打断专注。
+    /// 专注中的定时闲聊 / 休息中的闲聊 / 待机时的小课堂。间隔刻意拉得很开，避免打断专注。
     ///
-    /// 两段各归各的开关：
+    /// 专注 / 休息两段各归各的 ChillClock 开关：
     ///   AmbientVoice   —— 专注中的自言自语（关掉它不影响走神 / 退出提醒）
     ///   VoiceReminders —— 休息中的闲聊（这一段跟提醒语音共用一个总闸）
+    /// 待机那一段**不受 ChillClock 开关管**（理由写在下面那一支里）。
     /// 提醒类语音（走神 / 任务管理器 / 退出 / 休息开始）在 ProcessVoiceReminders 里，不受本方法影响。
+    /// 三段闲聊共同的"静音"闸门是**游戏自带的「自言自语过滤器」**（见 VoiceManager.Play）。
     /// </summary>
     private void TickAmbientVoice()
     {
         if (_voiceManager == null || !_masterEnabled.Value)
             return;
 
-        var chatInFocus = _ambientVoice.Value;
-        var chatInBreak = _voiceReminders.Value;
-        if (!chatInFocus && !chatInBreak)
-        {
-            // 两段都不说话：计时器清零，这样下次打开时是"重新计时"，
-            // 而不是因为计时器早就过期、一开就立刻蹦出一句。
-            _nextAmbientVoiceTime = 0f;
-            _nextRestChatTime = 0f;
-            return;
-        }
-
+        var chatInFocus = _ambientVoice.Value;      // 只管"专注中"（Ambient 池）
+        var chatInBreak = _voiceReminders.Value;    // 只管"休息中"（BreakTalk / Rest 池）
         var now = Time.realtimeSinceStartup;
 
         if (_focusActive)
@@ -406,14 +399,15 @@ public const string Version = "0.9.6";
 
         // 既不在专注也不在休息 = 待机。
         // 这里放小课堂那段闲聊（用户要在非专注时也能听到），间隔比专注时短一些。
+        //
+        // ★ 这一段**不看上面那两个开关** —— 它们一个叫"专注时自言自语"、一个叫
+        //   "专注时语音提醒"，管的都是专注 / 休息期间的事。以前这一段挂在
+        //   chatInFocus 上，于是"想专注安静"的人关掉"专注时自言自语"之后，连平时
+        //   的小课堂也一起没了（开关名字和它实际管的范围对不上，用户实测反馈）。
+        //   想在待机时安静下来，用**游戏自带的「自言自语过滤器」**就行 ——
+        //   本模组这三段闲聊都已经跟着它走了（见 VoiceManager.Play 里的 IsSelfTalkPool）。
         _nextRestChatTime = 0f;
         _nextAmbientVoiceTime = 0f;
-
-        if (!chatInFocus)
-        {
-            _nextIdleTalkTime = 0f;
-            return;
-        }
 
         if (_nextIdleTalkTime <= 0f)
         {
