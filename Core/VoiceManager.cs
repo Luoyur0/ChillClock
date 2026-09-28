@@ -62,6 +62,9 @@ internal sealed class VoiceManager
     /// <summary>最近一次"游戏那边有人开口"的时刻（判定在 DriveMouth 里，这里只做记录）。</summary>
     private float _gameVoiceStartedAt = -1f;
 
+    /// <summary>下一次允许写"被游戏的过滤器挡掉"那条日志的时刻（同一个原因 30 秒最多一条）。</summary>
+    private float _nextFilteredLogTime;
+
     /// <summary>
     /// 看门狗：连播最后一次推进的时间、以及游戏"正在说话"连续持续了多久。
     ///
@@ -536,6 +539,24 @@ internal sealed class VoiceManager
             return VoiceStartResult.Skipped;
         }
 
+        // 游戏自己的「自言自语」过滤器关着时，她自发的闲聊一律不开口 ——
+        // 和游戏里的做法一致：那道闸门管着"她什么时候能自言自语"，而我们的语音走的是
+        // 自己的播放链路、绕过了它，所以在这里补上同一个判据。
+        // 只挡闲聊这三个池子（见 IsSelfTalkPool）；提醒类不受影响 ——
+        // 游戏那边这两个开关本来也是各管各的，休息开始 / 创作结束的提醒照播。
+        if (IsSelfTalkPool(trigger) && !HeroineActionBridge.AllowsSelfTalk)
+        {
+            // 写一条日志（同一个池子 30 秒最多一条）：不然"她怎么突然不闲聊了"
+            // 从日志上完全看不出来，只能靠猜。
+            if (now >= _nextFilteredLogTime)
+            {
+                _nextFilteredLogTime = now + 30f;
+                Plugin.Log.LogInfo("[Chill Clock] 游戏的「自言自语」过滤器开着，" + trigger + " 不播");
+            }
+
+            return VoiceStartResult.Skipped;
+        }
+
         // 游戏自己正在说话时先让路：既不会盖掉它，也不会让它的 PlayVoice 因为
         // _isFinishedVoice 还是 false 而被静默丢弃。
         if (IsGameVoiceBusySafe())
@@ -574,6 +595,21 @@ internal sealed class VoiceManager
         _abortRequested = false;
         _runner.StartCoroutine(PlayChain(chain));
         return VoiceStartResult.Started;
+    }
+
+    /// <summary>
+    /// 这个池子算不算"她自发的闲聊"。游戏的「自言自语」过滤器只管这一类：
+    ///   Ambient   —— 专注中的自言自语
+    ///   IdleTalk  —— 非专注（待机）时说的小课堂段落
+    ///   BreakTalk —— 休息中的闲聊（同样是"小课堂"那批，和"休息提醒"分开两个池子）
+    /// 提醒类（走神 / 任务管理器 / 退出 / 休息开始 / 创作结束）和点击回应都不在此列 ——
+    /// 游戏自己的过滤器也不管这些，打开它之后那些提醒照样会来。
+    /// </summary>
+    private static bool IsSelfTalkPool(string trigger)
+    {
+        return string.Equals(trigger, "Ambient", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(trigger, "IdleTalk", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(trigger, "BreakTalk", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

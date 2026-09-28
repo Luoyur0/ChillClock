@@ -183,6 +183,38 @@ internal static class HeroineActionBridge
         }
     }
 
+    /// <summary>
+    /// 游戏设置里那个「自言自语」过滤器，现在还允许她说自发的闲聊吗。
+    ///
+    /// 原游戏这道闸门只看一个值（<c>Bulbul.SettingData.IsPlaySelfTalk</c>），挂在两处：
+    ///   <c>HeroineAI</c> 里的 SelfTalkToPlayer —— 不通过就直接 return，她不会自己开口闲聊；
+    ///   <c>MotionSoundController.IsCanPlayMotionVoice</c> —— 不通过就连动作小声音都不播。
+    /// 但它管不到我们：我们的语音是借游戏 VoiceManager 的 player（或退回自己的
+    /// AudioSource）播的，两条路都不经过上面那两个地方，所以这个开关对我们完全无效。
+    /// 要跟着它一起安静，就得自己来问一次。
+    ///
+    /// 读不到（存档 / 场景还没就绪）时返回 true —— 也就是"不拦"：宁可多说一句，
+    /// 也别在开局那几秒把该说的话一起吞掉。
+    /// </summary>
+    public static bool AllowsSelfTalk
+    {
+        get
+        {
+            try
+            {
+                if (!Bulbul.SaveDataManager.HasInstance)
+                    return true;
+
+                var setting = Bulbul.SaveDataManager.Instance.SettingData;
+                return setting == null || setting.IsPlaySelfTalk.Value;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+    }
+
     /// <summary>她当前动作段的数值（诊断用）。</summary>
     public static int CurrentAnimationId() => GetCurrentAnimationType();
 
