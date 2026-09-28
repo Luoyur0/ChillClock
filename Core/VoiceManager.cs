@@ -542,8 +542,8 @@ internal sealed class VoiceManager
         // 游戏自己的「自言自语过滤器」**开着**（= 静音自语）时，她自发的闲聊一律不开口 ——
         // 和游戏里的做法一致：那道闸门管着"她什么时候能自言自语"，而我们的语音走的是
         // 自己的播放链路、绕过了它，所以在这里补上同一个判据。
-        // ⚠️ 极性：过滤器"开"对应 IsPlaySelfTalk = false，判据在 HeroineActionBridge.AllowsSelfTalk
-        //    里翻了正（详见那边的注释）。
+        // 极性：过滤器"开"对应 IsPlaySelfTalk = false，判据在 HeroineActionBridge.AllowsSelfTalk
+        // 里翻了正（详见那边的注释）。
         // 只挡闲聊这三个池子（见 IsSelfTalkPool）；提醒类不受影响 ——
         // 游戏那边这两个开关本来也是各管各的，休息开始 / 创作结束的提醒照播。
         if (IsSelfTalkPool(trigger) && !HeroineActionBridge.AllowsSelfTalk)
@@ -1360,10 +1360,10 @@ internal sealed class VoiceManager
         }
         catch (Exception e)
         {
-           Plugin.Log.LogWarning("[Chill Clock] pack extract failed: " + file + " " + e);
-           _loading.Remove(file);
-           _loadingSince.Remove(file);
-           TryDelete(temp);
+            Plugin.Log.LogWarning("[Chill Clock] pack extract failed: " + file + " " + e);
+            _loading.Remove(file);
+            _loadingSince.Remove(file);
+            TryDelete(temp);
 
             var fallback = LoadEmbedded(file);
             if (fallback != null)
@@ -1408,10 +1408,10 @@ internal sealed class VoiceManager
             }
         }
 
-       _loading.Remove(file);
-       _loadingSince.Remove(file);
+        _loading.Remove(file);
+        _loadingSince.Remove(file);
 
-       if (clip != null)
+        if (clip != null)
         {
             Store(file, clip);
             if (deleteAfterLoad)
