@@ -279,7 +279,7 @@ internal sealed class SettingsPageInjector
 
         // 6. 专注中自言自语：独立开关，关掉它不影响上面的提醒语音。
         AddChild(CreateToggleRow(
-            LocalizedText.Pick("专注时自言自语", "Chat while Focusing", "集中時のひとりごと"),
+            LocalizedText.Pick("专注时自言自语", "Chat while Focusing", "集中中のひとりごと"),
             _getAmbientVoice(),
             _setAmbientVoice));
 

@@ -183,6 +183,52 @@ internal static class HeroineActionBridge
         }
     }
 
+    /// <summary>
+    /// 游戏设置（聪音档案那一页）里的「自言自语过滤器」现在会拦掉ChillClock的闲聊
+    ///
+    /// 先记住极性：过滤器是"静音"开关，和底层的字段正好相反。
+    /// 游戏界面上是「过滤器 开 / 关」两个按钮，说明写的是"开启后检测自言自语并静音"；
+    /// 而底层的值叫 <c>Bulbul.SettingData.IsPlaySelfTalk</c>（"是否播放"）：
+    ///
+    ///     过滤器 = 开（静音）  ⟺  IsPlaySelfTalk = false
+    ///     过滤器 = 关（允许）  ⟺  IsPlaySelfTalk = true
+    ///
+    /// 这不是猜的：<c>Bulbul.HeroineProfileView</c> 里就是
+    /// <c>_selfTalkFilterOnButton</c> / <c>_selfTalkFilterOffButton</c> 两个按钮，而订阅
+    /// <c>IsPlaySelfTalk</c> 的回调干的是 `ApplySelfTalkFilter(isPlaySelfTalk == false)`
+    /// —— 值为 false 时点亮「过滤器 = 开」。所以本属性直接读 <c>IsPlaySelfTalk</c>，
+    /// 就等价于问"过滤器是不是关着的"（关着 = 允许自语）。
+    ///
+    /// 原游戏这道闸门只看这一个值，挂在两处：
+    ///   <c>HeroineAI</c> 里的 SelfTalkToPlayer —— 不通过就直接 return，她不会自己开口闲聊；
+    ///   <c>MotionSoundController.IsCanPlayMotionVoice</c> —— 不通过就连动作小声音都不播。
+    /// 但它管不到我们：我们的语音是借游戏 VoiceManager 的 player（或退回自己的
+    /// AudioSource）播的，两条路都不经过上面那两个地方，所以这个开关对我们完全无效。
+    /// 要跟着它一起安静，就得自己来问一次。
+    ///
+    /// 读不到（存档 / 场景还没就绪）时返回 true —— 也就是"不拦"：宁可多说一句，
+    /// 也别在开局那几秒把该说的话一起吞掉。
+    /// </summary>
+    public static bool AllowsSelfTalk
+    {
+        get
+        {
+            try
+            {
+                if (!Bulbul.SaveDataManager.HasInstance)
+                    return true;
+
+                var setting = Bulbul.SaveDataManager.Instance.SettingData;
+                // IsPlaySelfTalk = true 就是"过滤器关着、允许自语"，直接用
+                return setting == null || setting.IsPlaySelfTalk.Value;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+    }
+
     /// <summary>她当前动作段的数值（诊断用）。</summary>
     public static int CurrentAnimationId() => GetCurrentAnimationType();
 
