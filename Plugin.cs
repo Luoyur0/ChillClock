@@ -388,11 +388,13 @@ public const string Version = "0.9.6";
             if (now >= _nextRestChatTime)
             {
                 _nextRestChatTime = now + UnityEngine.Random.Range(2f, 4f) * 60f;
-                // 休息时一半是小课堂那种闲聊，一半还是原来的休息提醒
+                // 休息时一半是小课堂那种闲聊，一半还是原来的休息提醒。
+                // 两条都是"她自己找话说"，过滤器开着就一句都别冒。别改回
+                //   PlayRestReminder —— 那是"进入休息"的提醒，按设计不受过滤器管。
                 if (chatInBreak && UnityEngine.Random.value < 0.5f)
                     _voiceManager.PlayBreakTalk();
                 else
-                    _voiceManager.PlayRestReminder();
+                    _voiceManager.PlayRestChat();
             }
             return;
         }
@@ -400,12 +402,12 @@ public const string Version = "0.9.6";
         // 既不在专注也不在休息 = 待机。
         // 这里放小课堂那段闲聊（用户要在非专注时也能听到），间隔比专注时短一些。
         //
-        // ★ 这一段**不看上面那两个开关** —— 它们一个叫"专注时自言自语"、一个叫
-        //   "专注时语音提醒"，管的都是专注 / 休息期间的事。以前这一段挂在
-        //   chatInFocus 上，于是"想专注安静"的人关掉"专注时自言自语"之后，连平时
-        //   的小课堂也一起没了（开关名字和它实际管的范围对不上，用户实测反馈）。
-        //   想在待机时安静下来，用**游戏自带的「自言自语过滤器」**就行 ——
-        //   本模组这三段闲聊都已经跟着它走了（见 VoiceManager.Play 里的 IsSelfTalkPool）。
+        // 这一段**不看上面那两个开关** —— 它们一个叫"专注时自言自语"、一个叫
+        // "专注时语音提醒"，管的都是专注 / 休息期间的事。以前这一段挂在
+        // chatInFocus 上，于是"想专注安静"的人关掉"专注时自言自语"之后，连平时
+        // 的小课堂也一起没了（开关名字和它实际管的范围对不上，用户实测反馈）。
+        // 想在待机时安静下来，用**游戏自带的「自言自语过滤器」**就行 ——
+        // 本模组这三段闲聊都已经跟着它走了（见 VoiceManager.Play 里的 IsSelfTalkPool）。
         _nextRestChatTime = 0f;
         _nextAmbientVoiceTime = 0f;
 

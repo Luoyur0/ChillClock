@@ -443,6 +443,9 @@ internal sealed class VoiceManager
     public VoiceStartResult PlayTaskManager() => Play("TaskManager", 4f);
     public VoiceStartResult PlayExitAttempt() => Play("Exit", 4f);
     public VoiceStartResult PlayRestReminder() => Play("Rest", 30f);
+
+    /// <summary>休息中**自发**的那一条：池子和上面那条共用，但身份是闲聊，要跟游戏过滤器走。</summary>
+    public VoiceStartResult PlayRestChat() => Play("Rest", 30f, null, spontaneous: true);
     public VoiceStartResult PlayAmbient() => Play("Ambient", 45f);
 
     /// <summary>非专注（既不专注也不休息）时的自言自语：小课堂那种连着讲几句的段落。</summary>
@@ -474,7 +477,8 @@ internal sealed class VoiceManager
         return result;
     }
 
-    private VoiceStartResult Play(string trigger, float cooldown, string forced = null)
+    /// <param name="spontaneous">这一句算不算"她自己找话说"（池子名判不出来的才要显式传，见 PlayRestChat）。</param>
+    private VoiceStartResult Play(string trigger, float cooldown, string forced = null, bool spontaneous = false)
     {
         if (_source == null || _runner == null)
         {
@@ -544,9 +548,9 @@ internal sealed class VoiceManager
         // 自己的播放链路、绕过了它，所以在这里补上同一个判据。
         // 极性：过滤器"开"对应 IsPlaySelfTalk = false，判据在 HeroineActionBridge.AllowsSelfTalk
         // 里翻了正（详见那边的注释）。
-        // 只挡闲聊这三个池子（见 IsSelfTalkPool）；提醒类不受影响 ——
+        // 只挡"她自己找话说"的那几段（见 IsSelfTalkPool / spontaneous 参数）；提醒类不受影响 ——
         // 游戏那边这两个开关本来也是各管各的，休息开始 / 创作结束的提醒照播。
-        if (IsSelfTalkPool(trigger) && !HeroineActionBridge.AllowsSelfTalk)
+        if ((spontaneous || IsSelfTalkPool(trigger)) && !HeroineActionBridge.AllowsSelfTalk)
         {
             // 写一条日志（同一个池子 30 秒最多一条）：不然"她怎么突然不闲聊了"
             // 从日志上完全看不出来，只能靠猜。
@@ -606,6 +610,9 @@ internal sealed class VoiceManager
     ///   BreakTalk —— 休息中的闲聊（同样是"小课堂"那批，和"休息提醒"分开两个池子）
     /// 提醒类（走神 / 任务管理器 / 退出 / 休息开始 / 创作结束）和点击回应都不在此列 ——
     /// 游戏自己的过滤器也不管这些，把过滤器打开（静音自语）之后那些提醒照样会来。
+    ///
+    /// <c>Rest</c> 故意不在这里：它一半是提醒（进入休息那条，要留）、一半是闲聊
+    /// （休息中定时那条，要挡），靠 Play 的 spontaneous 参数区分。
     /// </summary>
     private static bool IsSelfTalkPool(string trigger)
     {
