@@ -18,7 +18,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string Guid = "com.chillclock.plugin";
     public const string Name = "Chill Clock";
-public const string Version = "0.9.6";
+    public const string Version = "0.10.0";
 
     internal static ManualLogSource Log = null!;
     internal static Plugin Instance = null!;
@@ -282,6 +282,12 @@ public const string Version = "0.9.6";
     internal void TickHost()
     {
         UpdateCloseGuard();
+        // 连播 / 口型 / 字幕的卡死自愈。必须每帧跑：卡住的时候点击走不到播放逻辑，
+        // 只靠播放入口那几处检查是解不开的（表现就是"嘴巴一直动、怎么点都没反应"）。
+        _voiceManager?.TickWatchdog();
+        // 每帧刷新一次"游戏在不在结束通话演出"：ESC 拦截 / 窗口守护都读它，
+        // 只按 ESC 的时候才看的话，就分不出"演出刚开始"和"标志一开始就卡住"。
+        IsGameEndingCallTrusted();
         _ui.Tick();
         _uiHider.Tick(
             // 专注时禁止结束/跳过：藏番茄钟的停止/跳过按钮（独立开关）
@@ -806,10 +812,69 @@ public const string Version = "0.9.6";
             return false;
 
         // 游戏自己正在走"结束通话"演出时放行，否则它的收尾流程会被我们卡住
-        if (HeroineActionBridge.IsGameEndingCall())
+        if (IsGameEndingCallTrusted())
             return false;
 
         return true;
+    }
+
+    /// <summary>游戏"结束通话"演出开始算起的时刻（-1 = 没在演出）。</summary>
+    private float _gameEndingSince = -1f;
+
+    /// <summary>
+    /// "结束通话演出"最多信这么久。超过就当游戏那个标志卡住了。
+    /// </summary>
+    private const float GameEndingMaxSeconds = 60f;
+
+    private bool _loggedGameEndingStuck;
+
+    /// <summary>至少见过一次"没在结束通话"——这样才分得清"刚开始的演出"和"开局就卡住的标志"。</summary>
+    private bool _sawGameEndingClear;
+
+    /// <summary>
+    /// 游戏是不是**真的**在走"结束通话"演出（HeroineAI.IsCurrentGameEndDirection）。
+    ///
+    /// 为什么要加时间上限：这个标志会被写进存档，结束过一次通话之后再开游戏，
+    /// 它会一直保持 true 而且再也不会自己变回来。以前这里直接信它，结果整局都在"放行"——
+    /// 用户看到的就是「关了'专注时禁止关闭游戏'再重启，ESC 就拦不住了，把开关打开也没用，
+    /// 再重启一次才好」。现在只信演出开始后的前 60 秒，超时按卡住处理，拦 ESC 照常生效。
+    /// </summary>
+    private bool IsGameEndingCallTrusted()
+    {
+        if (!HeroineActionBridge.IsGameEndingCall())
+        {
+            _gameEndingSince = -1f;
+            _loggedGameEndingStuck = false;
+            _sawGameEndingClear = true;
+            return false;
+        }
+
+        // 从游戏启动就一直挂着 true（存档里带进来的）= 卡住，不是演出
+        if (!_sawGameEndingClear)
+        {
+            if (!_loggedGameEndingStuck)
+            {
+                _loggedGameEndingStuck = true;
+                Logger.LogWarning("[Chill Clock] 开局就报「结束通话」中（存档带进来的标志），忽略它");
+            }
+
+            return false;
+        }
+
+        if (_gameEndingSince < 0f)
+            _gameEndingSince = Time.realtimeSinceStartup;
+
+        if (Time.realtimeSinceStartup - _gameEndingSince <= GameEndingMaxSeconds)
+            return true;
+
+        if (!_loggedGameEndingStuck)
+        {
+            _loggedGameEndingStuck = true;
+            Logger.LogWarning("[Chill Clock] 游戏的「结束通话」标志挂了超过 " +
+                              (int)GameEndingMaxSeconds + " 秒，当成卡住处理（ESC 拦截恢复正常）");
+        }
+
+        return false;
     }
 
     /// <summary>ESC 拦截的"设置层"状态（总开关 + 专注时禁止关闭游戏）。诊断日志用。</summary>
@@ -834,7 +899,7 @@ public const string Version = "0.9.6";
         if (!_masterEnabled.Value)
             return false;
 
-        if (HeroineActionBridge.IsGameEndingCall())
+        if (IsGameEndingCallTrusted())
             return false;
 
         return true;

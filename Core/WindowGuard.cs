@@ -103,6 +103,26 @@ public sealed class WindowGuard
         Plugin.Log.LogInfo("[Chill Clock] 游戏演出中（开场 / 结束通话 / 离席），这一轮先不收窗口");
     }
 
+    /// <summary>已经记过日志的"拿不到路径"的进程名，避免每轮刷屏。</summary>
+    private readonly HashSet<string> _loggedUnknownPath = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 拿不到进程路径时记一条（每个进程名只记一次）。
+    /// 这类窗口以前是被静默跳过的，出了问题日志上什么都看不到。
+    /// </summary>
+    private void NoteUnknownPath(Win32.WindowInfo window)
+    {
+        if (!string.IsNullOrEmpty(window.ProcessPath))
+            return;
+
+        var key = window.ProcessName ?? ("pid:" + window.ProcessId);
+        if (!_loggedUnknownPath.Add(key))
+            return;
+
+        Plugin.Log.LogInfo("[Chill Clock] 拿不到进程路径（多半是以管理员/反作弊保护运行）：" +
+                           key + " [" + window.ClassName + "] " + window.Title + " —— 按进程名处理");
+    }
+
     private void SweepMinimizeLocked(bool taskManagerOnly, bool allowVoice)
     {
         var windows = Win32.EnumerateVisibleTopLevelWindows();
@@ -115,8 +135,14 @@ public sealed class WindowGuard
                 continue;
             if (window.ProcessId == (uint)Win32.CurrentProcessId)
                 continue;
-            if (string.IsNullOrEmpty(window.ProcessPath) && !window.IsTaskManager)
+            // 拿不到进程路径也照样收：带了反作弊 / 以管理员运行的游戏（比如明日方舟 PC 版）
+            // 会让低权限进程的 QueryFullProcessImageName 失败，以前这里直接跳过，
+            // 表现就是"开着别的游戏，我们的窗口守护当它不存在"。现在只剩进程名也能处理，
+            // 白名单按进程名匹配（WhitelistStore.IsAllowed 支持）。
+            if (string.IsNullOrEmpty(window.ProcessPath) && string.IsNullOrEmpty(window.ProcessName) &&
+                !window.IsTaskManager)
                 continue;
+            NoteUnknownPath(window);
             if (Win32.IsMinimized(window.Handle))
                 continue;
             if (_store.IsAllowed(window.ProcessPath, window.ProcessName))

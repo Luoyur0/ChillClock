@@ -414,6 +414,95 @@ internal sealed class VoiceManager
         HeroineActionBridge.EndLineReaction();
     }
 
+    /// <summary>连播都结束了、口型还开着多久，就认定"没人管了"。</summary>
+    private const float OrphanMouthSeconds = 4f;
+
+    /// <summary>字幕显示超过这么久还没收掉，就是收尾协程没跑完。</summary>
+    private const float StuckSubtitleSeconds = 30f;
+
+    /// <summary>
+    /// 每帧跑的"卡死自愈"。
+    ///
+    /// 为什么必须每帧跑：这些检查原来只写在 Play() 里，可真正卡住的时候点击根本走不到
+    /// Play()（一律被映射成"现在不能反应"），于是整局都解不开。用户报的现象就是
+    /// 「只剩游戏那句字幕、聪音嘴巴一直开合、怎么点都没反应，连休息结束进入学习还是这样」。
+    /// 成因是游戏那边把自己的语音标志卡在"正在说话"，我们关口型时第一道检查直接返回，
+    /// 口型就永远留在了开着的状态（见 HeroineActionBridge.SetMouthTalk 的 force 参数）。
+    /// </summary>
+    public void TickWatchdog()
+    {
+        try
+        {
+            var now = Time.realtimeSinceStartup;
+
+            // 1) 连播协程被掐断，或者卡在某个等待里
+            var stuck = _chainRunning &&
+                        ((_lastChainTick > 0f && now - _lastChainTick > ChainStuckSeconds) ||
+                         (_chainStartedAt > 0f && now - _chainStartedAt > ChainHardLimitSeconds));
+            if (stuck)
+            {
+                Plugin.Log.LogWarning("[Chill Clock] 连播卡住（" + _chainStage + "），看门狗重置");
+                ResetStuckChain();
+            }
+
+            // 2) 没人在播、口型却还开着 = 上面那次卡住留下的后遗症。
+            //    只有在"游戏也没在说话"时才强制闭口：她真的在说台词时口型本来就该动，
+            //    那由游戏自己管。游戏那边标志卡死超过 30 秒后 IsGameVoiceBusySafe()
+            //    会返回 false（它的既有自愈），这时候才会轮到我们把口型收掉。
+            var gameVoiceBusy = IsGameVoiceBusySafe();
+            if (!_chainRunning && !gameVoiceBusy && HeroineActionBridge.MouthTalkOn &&
+                now - HeroineActionBridge.MouthTalkChangedAt > OrphanMouthSeconds)
+            {
+                Plugin.Log.LogWarning("[Chill Clock] 口型没人管了，强制闭上");
+                HeroineActionBridge.SetMouthTalk(false, true);
+            }
+
+            // 3) 字幕收不回去（游戏把它的字幕顶上来之后我们的收尾被打断）
+            if (_subtitle != null && _subtitle.IsShowing &&
+                now - _subtitle.ShowingSince > StuckSubtitleSeconds)
+            {
+                Plugin.Log.LogWarning("[Chill Clock] 字幕卡住了，看门狗收起");
+                _subtitle.HideNow();
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning("[Chill Clock] watchdog failed: " + e.Message);
+        }
+    }
+
+    /// <summary>把卡住的连播状态整个清干净（音频、口型、字幕、动作反应）。</summary>
+    private void ResetStuckChain()
+    {
+        _chainRunning = false;
+        _chainStage = string.Empty;
+        _chainStartedAt = 0f;
+        _abortRequested = false;
+
+        try
+        {
+            _source.Stop();
+        }
+        catch
+        {
+            // ignore
+        }
+
+        HeroineActionBridge.StopNativeVoice();
+        HeroineActionBridge.EndLineReaction();
+        // 口型不在这里强关：她这时候可能真的在说游戏自己的台词，
+        // 那个由上面第 2 条规则按"游戏到底有没有在说话"判断后再收。
+
+        try
+        {
+            _subtitle?.HideNow();
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
     /// <summary>退出时丢开语音包。</summary>
     public void Dispose()
     {

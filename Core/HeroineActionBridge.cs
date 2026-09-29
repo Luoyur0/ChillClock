@@ -1056,14 +1056,27 @@ internal static class HeroineActionBridge
         }
     }
 
-    /// <summary>开/关说话口型（Animator 布尔参数 "Enable_Talk"）。</summary>
-    public static void SetMouthTalk(bool enabled)
+    /// <summary>口型现在是不是我们开着的（看门狗用：连播都结束了还开着就是没人管了）。</summary>
+    public static bool MouthTalkOn { get; private set; }
+
+    /// <summary>我们最后一次动口型的时刻。</summary>
+    public static float MouthTalkChangedAt { get; private set; }
+
+    /// <summary>
+    /// 开/关说话口型（Animator 布尔参数 "Enable_Talk"）。
+    ///
+    /// <paramref name="force"/>=true 表示"不管游戏那边报不报正在说话，都照做"。
+    /// 必须留这么一条强制路径：游戏那边的语音标志一旦卡在"正在说话"上
+    /// （它自己流程被打断就会这样），普通路径会在下面第一道检查里一直提前返回，
+    /// 我们的口型就再也关不掉了 —— 用户看到的就是"嘴巴一直开合、怎么点都没反应"。
+    /// </summary>
+    public static void SetMouthTalk(bool enabled, bool force = false)
     {
         if (!Enabled)
             return;
 
         // 关口型前先确认游戏自己没有在说话（游戏自己的 EndNoVoiceTalk 也是这么判的）
-        if (!enabled && IsGameVoiceBusy())
+        if (!enabled && !force && IsGameVoiceBusy())
             return;
 
         var controller = EnsureVoiceController();
@@ -1073,6 +1086,8 @@ internal static class HeroineActionBridge
         try
         {
             _changeTalkAnimation.Invoke(controller, new object[] { enabled });
+            MouthTalkOn = enabled;
+            MouthTalkChangedAt = UnityEngine.Time.realtimeSinceStartup;
         }
         catch (Exception e)
         {

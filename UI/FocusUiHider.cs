@@ -289,6 +289,16 @@ internal sealed class FocusUiHider
         if (topIcons != null)
             HideTarget(topIcons);
 
+        // LeftIcons / CenterIcons 这两列**不整块收**。
+        //
+        // 没装 ChillPatcherLite 的 UI 重排时，播放列表按钮就住在 CenterIcons（屏幕左边），
+        // 播放条也在附近；整块收掉就把切歌入口一起收了（用户反馈：藏了就没法切歌）。
+        // 用户要藏的其实只是那几颗功能图标，所以这两列改成按名字收（上面那份名单），
+        // 名单外的（音乐 / 播放列表 / 装饰等）一律留着。
+        // RightIcons / TopIcons 整块收是安全的：重排版里图标都在这两个容器里，
+        // 而音乐条被挪到 LeftIcons 的父节点下，不在其中。
+        LogContainerChildrenOnce();
+
         var names = new[]
         {
             "UI_FacilityPlayerLevel",
@@ -298,6 +308,11 @@ internal sealed class FocusUiHider
             "IconCalender_Button",
             "IconHabit_Button",
             "IconSetting_Button",
+            // LeftIcons / CenterIcons 那两列里的按钮（容器不整块收，所以按名字点名）
+            "IconStory_Button",
+            "IconSpecial_Button",
+            "IconDecoration_Button",
+            "IconEnviroment_Button",
             "IconExit_Button"
         };
         foreach (var name in names)
@@ -479,6 +494,10 @@ internal sealed class FocusUiHider
     {
         if (target == null || !target.activeInHierarchy)
             return;
+        // 音乐相关的控件永远不藏：播放列表按钮在某些布局里和要藏的图标挤在同一列，
+        // 藏掉就没法切歌了（用户明确要求保留）。
+        if (IsMusicControl(target.name))
+            return;
         if (!_hiddenTargets.Add(target))
             return;
 
@@ -487,6 +506,68 @@ internal sealed class FocusUiHider
             group = target.AddComponent<CanvasGroup>();
 
         _hidden.Add(new HiddenEntry(target, group));
+    }
+
+    /// <summary>名字里带音乐 / 播放列表的控件（UI_FacilityMusic、IconMusicPlaylist_Button 等）。</summary>
+    private static bool IsMusicControl(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        return name.IndexOf("Music", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("Playlist", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private bool _loggedContainers;
+
+    /// <summary>
+    /// 把四个图标容器的子项名单写一次日志。
+    /// "该藏的没藏 / 不该藏的藏了"这类问题只能靠这份名单定位 ——
+    /// 没装 UI 重排时各按钮坐在哪一列，跟重排版完全不一样。
+    /// </summary>
+    private void LogContainerChildrenOnce()
+    {
+        if (_loggedContainers)
+            return;
+        _loggedContainers = true;
+
+        var roots = new[]
+        {
+            new[] { "Paremt/PCPlatform/Canvas/UI/MostFrontArea/RightIcons", "RightIcons" },
+            new[] { "Paremt/PCPlatform/Canvas/UI/MostFrontArea/TopIcons", "TopIcons" },
+            new[] { "Paremt/PCPlatform/Canvas/UI/MostFrontArea/LeftIcons", "LeftIcons" },
+            new[] { "Paremt/PCPlatform/Canvas/UI/MostFrontArea/CenterIcons", "CenterIcons" }
+        };
+
+        foreach (var pair in roots)
+        {
+            try
+            {
+                var root = GameObject.Find(pair[0]);
+                if (root == null)
+                    root = FindActiveByExactName(pair[1]);
+                if (root == null)
+                {
+                    Plugin.Log.LogInfo("[Chill Clock] UI 容器 " + pair[1] + "：找不到（这个布局里没有）");
+                    continue;
+                }
+
+                var names = new List<string>();
+                for (var i = 0; i < root.transform.childCount; i++)
+                {
+                    var child = root.transform.GetChild(i);
+                    names.Add(child.name + (child.gameObject.activeSelf ? string.Empty : "(隐藏)"));
+                }
+
+                Plugin.Log.LogInfo("[Chill Clock] UI 容器 " + pair[1] +
+                                   "（容器本身 active=" + root.activeInHierarchy + "）子项: " +
+                                   string.Join(", ", names));
+            }
+            catch
+            {
+                // 诊断用，失败无所谓
+            }
+        }
     }
 
     private void PruneDeadTargets()
