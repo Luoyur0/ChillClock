@@ -281,6 +281,10 @@ public sealed class Plugin : BaseUnityPlugin
             }
             Log.LogInfo("[Chill Clock] ESC 拦截已挂 " + escPatched + " 个输入方法（进程内，无全局钩子）");
 
+            // 点「结束通话」并确认 → 立刻停掉我们的台词（挂在游戏处理那个按钮的方法上）
+            var exitCallPatched = ExitCallPatch.Install(_harmony);
+            Log.LogInfo("[Chill Clock] 结束通话拦截已挂 " + exitCallPatched + " 个方法");
+
             var patched = _harmony.GetPatchedMethods()
                 .Select(m => m.DeclaringType?.Name + "." + m.Name)
                 .ToList();
@@ -773,6 +777,19 @@ public sealed class Plugin : BaseUnityPlugin
         catch (Exception e)
         {
             Logger.LogWarning("[Chill Clock] abort voice failed: " + e.Message);
+        }
+    }
+
+    /// <summary>用户点了「结束通话」并确认（ExitCallPatch 挂到游戏按钮上）：立刻停、并静默一段。</summary>
+    internal void NotifyCallEnding()
+    {
+        try
+        {
+            _voiceManager?.NotifyCallEnding();
+        }
+        catch (Exception e)
+        {
+            Logger.LogWarning("[Chill Clock] call ending failed: " + e.Message);
         }
     }
 

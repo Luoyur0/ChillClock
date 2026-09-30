@@ -429,6 +429,56 @@ internal sealed class VoiceManager
     private const float StuckSubtitleSeconds = 30f;
 
     /// <summary>
+    /// 结束通话演出期间、以及演出结束后的这一小段时间里，我们一句话都不说。
+    ///
+    /// 用户实测：点「结束通话」并确认之后，聪音说完告别的那句，我们这边的台词又接上了 ——
+    /// 因为演出一结束，游戏那个"正在结束通话"的标志就变回 false，我们按常规又觉得自己可以开口。
+    /// 这段时间本来就该安静（他刚跟你道别），所以演出中停掉我们的台词，结束后再静默这么一会儿。
+    /// </summary>
+    private const float CallEndingQuietSeconds = 20f;
+
+    private float _callEndingQuietUntil;
+    private float _endingSeenSince = -1f;
+    private bool _sawEndingClear;
+
+    /// <summary>
+    /// 「点了结束通话」专用：这段时间里被打断也不许重放。
+    /// 只影响这一种情况 —— 平时"被动作小声音打断就重放这一句"的功能保持原样
+    ///（那是用户特意要的行为，不能动）。新的连播开始时清掉。
+    /// </summary>
+    private bool _noResumeAfterCut;
+
+    /// <summary>
+    /// 用户点了「结束通话」并确认（由 ExitCallPatch 直接挂到游戏那个按钮上调用）：
+    /// 立刻停下我们的声音，并在接下来 20 秒内不再开口。
+    /// </summary>
+    public void NotifyCallEnding()
+    {
+        _callEndingQuietUntil = Time.realtimeSinceStartup + CallEndingQuietSeconds;
+        _endingSeenSince = -1f;
+        _sawEndingClear = true;
+        _noResumeAfterCut = true;
+
+        try
+        {
+            if (_chainRunning || _source.isPlaying || HeroineActionBridge.IsNativeVoicePlaying())
+            {
+                Plugin.Log.LogInfo("[Chill Clock] 结束通话：立刻停掉我们的台词");
+                Interrupt();
+            }
+
+            _chainRunning = false;
+            _chainStage = string.Empty;
+            _chainStartedAt = 0f;
+            HeroineActionBridge.SetMouthTalk(false, true);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning("[Chill Clock] 结束通话处理失败: " + e.Message);
+        }
+    }
+
+    /// <summary>
     /// 每帧跑的"卡死自愈"。
     ///
     /// 为什么必须每帧跑：这些检查原来只写在 Play() 里，可真正卡住的时候点击根本走不到
@@ -442,6 +492,9 @@ internal sealed class VoiceManager
         try
         {
             var now = Time.realtimeSinceStartup;
+
+            // 0) 结束通话：演出中马上停掉我们的台词，演出结束后再静默一小段
+            SuperviseCallEnding(now);
 
             // 1) 连播协程被掐断，或者卡在某个等待里
             var stuck = _chainRunning &&
@@ -480,6 +533,58 @@ internal sealed class VoiceManager
     }
 
     /// <summary>把卡住的连播状态整个清干净（音频、口型、字幕、动作反应）。</summary>
+    /// <summary>
+    /// 盯着「结束通话」这件事：
+    ///   - 用户一点确认就立刻停（见 NotifyCallEnding，由 ExitCallPatch 直接挂到按钮上）
+    ///   - 演出期间：立刻停掉我们的台词（他说完再见之后不该再有我们的话）
+    ///   - 演出结束后 20 秒内：不开口（见 CallEndingQuietSeconds）
+    /// 标志位被存档带进来一直挂着 true 的那种情况，超过 60 秒就当卡住，不再静默。
+    /// </summary>
+    private void SuperviseCallEnding(float now)
+    {
+        var ending = HeroineActionBridge.IsGameEndingCall();
+
+        if (!ending)
+        {
+            _endingSeenSince = -1f;
+            _sawEndingClear = true;
+
+            // 演出已经结束、但还在静默窗口里：这时候口型要是还开着（我们的标志没清掉，
+            // 或者游戏那边的语音标志卡在"正在说话"导致普通路径关不掉），强制闭上。
+            // 用户反馈的就是"点结束通话之后声音停了，嘴却一直在动"。
+            if (now < _callEndingQuietUntil && !_chainRunning &&
+                HeroineActionBridge.MouthTalkOn && now - HeroineActionBridge.MouthTalkChangedAt > 3f)
+            {
+                Plugin.Log.LogInfo("[Chill Clock] 结束通话后口型还开着，强制闭上");
+                HeroineActionBridge.SetMouthTalk(false, true);
+            }
+
+            return;
+        }
+
+        // 从游戏启动就挂着 true（存档里的），不是真的在演出：忽略
+        if (!_sawEndingClear)
+            return;
+
+        if (_endingSeenSince < 0f)
+            _endingSeenSince = now;
+        if (now - _endingSeenSince > 60f)
+            return;
+
+        _callEndingQuietUntil = now + CallEndingQuietSeconds;
+        _noResumeAfterCut = true;
+
+        if (_chainRunning || (_source != null && _source.isPlaying))
+        {
+            Plugin.Log.LogInfo("[Chill Clock] 结束通话演出中：停掉我们的台词");
+            Interrupt();
+            _chainRunning = false;
+            _chainStage = string.Empty;
+            _chainStartedAt = 0f;
+        }
+
+    }
+
     private void ResetStuckChain()
     {
         _chainRunning = false;
@@ -578,6 +683,12 @@ internal sealed class VoiceManager
     private VoiceStartResult Play(string trigger, float cooldown, string forced = null, bool spontaneous = false)
     {
         if (_source == null || _runner == null)
+        {
+            return VoiceStartResult.Deferred;
+        }
+
+        // 刚结束通话（或者正在走结束演出）时一句话都不说
+        if (Time.realtimeSinceStartup < _callEndingQuietUntil)
         {
             return VoiceStartResult.Deferred;
         }
@@ -696,6 +807,7 @@ internal sealed class VoiceManager
         _nextTimes[trigger] = now + cooldown + (chain.Count > 1 ? chain.Count * 4.5f : 0f);
         _gestureChance = GestureChanceFor(trigger);
         _abortRequested = false;
+        _noResumeAfterCut = false;   // 新的一段开始：恢复"短音打断可重放"的老规矩
         _runner.StartCoroutine(PlayChain(chain));
         return VoiceStartResult.Started;
     }
@@ -1149,6 +1261,12 @@ internal sealed class VoiceManager
             {
                 if (IsInterrupted(clip, waited))
                 {
+                    // 只有"用户点了结束通话"这一种情况不重放：
+                    // 那种时候我们的声音必须彻底停掉，重放会让嘴继续动。
+                    // 其它打断（动作小声音、她开口）仍旧照老规矩 —— 短音重放、长音让路。
+                    if (_noResumeAfterCut)
+                        yield break;
+
                     if (GameVoiceRecent)
                     {
                         // 是她的台词（长句）还是动作自带的小声音（嗯声 / 翻页 / 呼呼）？
@@ -1217,6 +1335,10 @@ internal sealed class VoiceManager
         {
             if (IsInterrupted(clip, elapsed))
             {
+                // 同上：只有"点了结束通话"之后不再重放
+                if (_noResumeAfterCut)
+                    yield break;
+
                 if (GameVoiceRecent)
                 {
                     // 同上：先看这条游戏语音有多长，短音重放这一句，长句让路。
