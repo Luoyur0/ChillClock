@@ -73,6 +73,21 @@ public sealed class Plugin : BaseUnityPlugin
         Log = Logger;
         Instance = this;
 
+        // 插件对象本身也要跨场景保住。
+        //
+        // 游戏切换显示模式（全屏 / 窗口化）会重载场景，实测这时 BepInEx 的插件对象会被
+        // 一起销毁：托管对象还在（静态字段指着它，所以 Update 里的 `Plugin.Instance?.` 照跑），
+        // 但 Unity 侧算"已销毁" —— 任何用 `== null` 判断的地方都会误判成"没有插件"
+        //（ESC 拦截就是这么整局失效的）。挂上 DontDestroyOnLoad 从根上避免这件事。
+        try
+        {
+            DontDestroyOnLoad(gameObject);
+        }
+        catch (Exception e)
+        {
+            Logger.LogWarning("[Chill Clock] DontDestroyOnLoad failed: " + e.Message);
+        }
+
         _masterEnabled = Config.Bind("General", "Enabled", true, "总开关：是否启用专注白名单功能。");
         _disableStopSkip = Config.Bind(
             "Focus", "DisableStopSkip", true,
@@ -839,7 +854,7 @@ public sealed class Plugin : BaseUnityPlugin
     /// 用户看到的就是「关了'专注时禁止关闭游戏'再重启，ESC 就拦不住了，把开关打开也没用，
     /// 再重启一次才好」。现在只信演出开始后的前 60 秒，超时按卡住处理，拦 ESC 照常生效。
     /// </summary>
-    private bool IsGameEndingCallTrusted()
+    internal bool IsGameEndingCallTrusted()
     {
         if (!HeroineActionBridge.IsGameEndingCall())
         {
@@ -890,15 +905,16 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>
-    /// ESC 要不要拦。**和"专注时禁止关闭游戏"那个开关无关**，只要插件开着就拦
-    ///（用户要求：默认生效）。唯一的例外是游戏自己在走"结束通话"演出的时候，
-    /// 那时候放行，免得把它的收尾流程卡死。
+    /// ESC 要不要拦。
+    ///
+    /// **不看任何开关**：用户要求 ESC 拦截默认生效、跟总开关和"专注时禁止关闭游戏"都无关。
+    /// 以前这里挂了 `_masterEnabled`，结果总开关一旦在内存里变成 false
+    ///（设置页里一碰就可能被写成 false），ESC 就整局拦不住 —— 而 config 文件里还写着 true，
+    /// 从日志上完全看不出原因。唯一的例外是游戏自己在走"结束通话"演出，那时候放行，
+    /// 免得把它的收尾流程卡死。
     /// </summary>
     internal bool ShouldBlockEscape()
     {
-        if (!_masterEnabled.Value)
-            return false;
-
         if (IsGameEndingCallTrusted())
             return false;
 

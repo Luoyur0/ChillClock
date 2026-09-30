@@ -85,9 +85,17 @@ internal sealed class VoiceManager
     private readonly Dictionary<string, float> _loadingSince = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
     private float _chainStartedAt;
     private string _chainStage = string.Empty;
-    /// <summary>一条连播的总时长上限：再长也不该超过这个数，超了就是卡住了。</summary>
-    private const float ChainHardLimitSeconds = 45f;
+    /// <summary>
+    /// 连播的总时长上限**按句数算**：一句 15 秒 + 30 秒余量。
+    ///
+    /// 以前写死 45 秒，结果长故事（5〜14 句、40〜70 秒）讲到后面就被当成"卡住"掐掉 ——
+    /// 用户听到的正是"长语音说到最后一两句突然断了"。故事本身就是要讲这么久的，
+    /// 所以上限必须跟着句数走；真正判断"卡住"的是下面那个"多久没有推进"的判据。
+    /// </summary>
+    private const float ChainSecondsPerLine = 15f;
+    private const float ChainLimitSlackSeconds = 30f;
     private const float ChainStuckSeconds = 20f;
+    private float _chainMaxSeconds = 45f;
     private const float GameVoiceStuckSeconds = 30f;
 
     /// <summary>
@@ -438,7 +446,7 @@ internal sealed class VoiceManager
             // 1) 连播协程被掐断，或者卡在某个等待里
             var stuck = _chainRunning &&
                         ((_lastChainTick > 0f && now - _lastChainTick > ChainStuckSeconds) ||
-                         (_chainStartedAt > 0f && now - _chainStartedAt > ChainHardLimitSeconds));
+                         (_chainStartedAt > 0f && now - _chainStartedAt > _chainMaxSeconds));
             if (stuck)
             {
                 Plugin.Log.LogWarning("[Chill Clock] 连播卡住（" + _chainStage + "），看门狗重置");
@@ -583,10 +591,10 @@ internal sealed class VoiceManager
             _abortRequested = false;
             HeroineActionBridge.SetMouthTalk(false);
         }
-        else if (_chainRunning && _chainStartedAt > 0f && nowChain - _chainStartedAt > ChainHardLimitSeconds)
+        else if (_chainRunning && _chainStartedAt > 0f && nowChain - _chainStartedAt > _chainMaxSeconds)
         {
             // 总时长硬上限：协程还活着、但明显太久（例如某个等待循环条件永远不成立）
-            Plugin.Log.LogWarning("[Chill Clock] 连播超过 " + (int)ChainHardLimitSeconds +
+            Plugin.Log.LogWarning("[Chill Clock] 连播超过 " + (int)_chainMaxSeconds +
                                   " 秒还没结束（卡在：" + _chainStage + "），强制结束");
             _chainRunning = false;
             _abortRequested = true;
@@ -922,6 +930,8 @@ internal sealed class VoiceManager
         HeroineActionBridge.SuppressSelfTalk(true);
         _lastChainTick = Time.realtimeSinceStartup;
         _chainStartedAt = Time.realtimeSinceStartup;
+        // 这一段允许响多久：按句数算（见 ChainSecondsPerLine 的注释）
+        _chainMaxSeconds = ChainLimitSlackSeconds + ChainSecondsPerLine * Mathf.Max(1, files.Count);
         try
         {
             // 连播组只在第一句转头：每句都转一次头会看着像"来回扭头"
